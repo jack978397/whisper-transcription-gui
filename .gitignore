@@ -1,0 +1,21 @@
+# Python 相關的快取檔
+__pycache__/
+*.pyc
+
+# 常見的編輯器/IDE設定檔
+.vscode/
+.idea/
+
+# 專案執行後產生的輸出檔 (您可以自訂)
+*.mp3
+*.mp4
+*.m4a
+*.mov
+*.mkv
+*.wav
+*.srt
+*.txt
+*.ytdl
+
+# 專案產生的資料夾
+測試輸出/
