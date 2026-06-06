@@ -215,7 +215,6 @@ class WhisperApp:
         self.to_traditional_var = tk.BooleanVar(value=False)
         self.traditional_cb = ttk.Checkbutton(asr_btn, text="繁體輸出",
                                               variable=self.to_traditional_var)
-        self.traditional_cb.pack(side=tk.LEFT, padx=(0, 8))
         self.stop_button = ttk.Button(asr_btn, text="終止運算",
                                       command=self.stop_transcription, state="disabled")
         self.stop_button.pack(side=tk.LEFT)
@@ -284,9 +283,11 @@ class WhisperApp:
         if engine == "Whisper":
             self.prompt_label.grid()
             self.prompt_text.grid()
+            self.traditional_cb.pack_forget()
         else:
             self.prompt_label.grid_remove()
             self.prompt_text.grid_remove()
+            self.traditional_cb.pack(side=tk.LEFT, padx=(0, 8))
 
     def on_input_type_change(self, *args):
         if self.input_type_var.get() == "檔案":
