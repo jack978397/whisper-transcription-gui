@@ -7,31 +7,9 @@ import os
 import time
 import sys
 import io
-from whisper_engine import WhisperEngine, FunASREngine, SenseVoiceEngine
+from whisper_engine import WhisperEngine
 import srt_utils
 import run_logger
-
-try:
-    from opencc import OpenCC
-    _opencc = OpenCC('s2twp')
-except ImportError:
-    _opencc = None
-
-_ENGINE_MODELS = {
-    "Whisper":    WhisperEngine.MODELS,
-    "FunASR":     FunASREngine.MODELS,
-    "SenseVoice": SenseVoiceEngine.MODELS,
-}
-_ENGINE_DEFAULT_MODEL = {
-    "Whisper":    "turbo",
-    "FunASR":     "paraformer-zh",
-    "SenseVoice": "SenseVoiceSmall",
-}
-_ENGINE_HINTS = {
-    "Whisper":    "OpenAI Whisper，多語言，本地運行",
-    "FunASR":     "阿里達摩院 Paraformer，中文/台語精度極高，本地運行",
-    "SenseVoice": "阿里 SenseVoice，多語言極速，支援情緒偵測，本地運行",
-}
 
 try:
     from srt_processor import fix_and_process_srt
@@ -96,16 +74,11 @@ class CollapsibleSection:
 class WhisperApp:
     def __init__(self, master):
         self.master = master
-        master.title("多功能 Whisper 轉錄工具")
+        master.title("Whisper 轉錄工具")
         master.geometry("860x780")
         master.minsize(700, 520)
 
         self.engine = WhisperEngine()
-        self.asr_engines = {
-            "Whisper":    self.engine,
-            "FunASR":     FunASREngine(),
-            "SenseVoice": SenseVoiceEngine(),
-        }
         self.transcription_result = None
         self.stop_thread_flag = False
         self.stop_download_flag = False
@@ -126,37 +99,26 @@ class WhisperApp:
         asr = asr_sec.content
         asr.columnconfigure(1, weight=1)
 
-        # 辨識引擎
-        ttk.Label(asr, text="辨識引擎:").grid(row=0, column=0, padx=5, pady=3, sticky="w")
-        self.engine_var = tk.StringVar(value="Whisper")
-        self.engine_var.trace_add("write", self.on_engine_change)
-        ttk.Combobox(asr, textvariable=self.engine_var,
-                     values=list(_ENGINE_MODELS.keys()),
-                     state="readonly", width=18
-                     ).grid(row=0, column=1, padx=5, pady=3, sticky="w")
-        self.engine_hint = ttk.Label(asr, text=_ENGINE_HINTS["Whisper"], foreground="gray")
-        self.engine_hint.grid(row=0, column=2, columnspan=2, padx=5, sticky="w")
-
         # 模型選擇
-        ttk.Label(asr, text="選擇模型:").grid(row=1, column=0, padx=5, pady=3, sticky="w")
+        ttk.Label(asr, text="選擇模型:").grid(row=0, column=0, padx=5, pady=3, sticky="w")
         self.model_var = tk.StringVar(value="turbo")
         self.model_menu = ttk.Combobox(asr, textvariable=self.model_var,
                                        values=WhisperEngine.MODELS,
                                        state="readonly", width=18)
-        self.model_menu.grid(row=1, column=1, padx=5, pady=3, sticky="w")
+        self.model_menu.grid(row=0, column=1, padx=5, pady=3, sticky="w")
 
         # 輸入類型
-        ttk.Label(asr, text="輸入類型:").grid(row=2, column=0, padx=5, pady=3, sticky="w")
+        ttk.Label(asr, text="輸入類型:").grid(row=1, column=0, padx=5, pady=3, sticky="w")
         self.input_type_var = tk.StringVar(value="檔案")
         self.input_type_var.trace_add("write", self.on_input_type_change)
         ttk.Radiobutton(asr, text="檔案 (音訊/影片)",
                         variable=self.input_type_var, value="檔案"
-                        ).grid(row=2, column=1, sticky="w")
+                        ).grid(row=1, column=1, sticky="w")
         ttk.Radiobutton(asr, text="YouTube 連結",
                         variable=self.input_type_var, value="YouTube"
-                        ).grid(row=2, column=2, sticky="w")
+                        ).grid(row=1, column=2, sticky="w")
 
-        # 動態輸入區（row=3）
+        # 動態輸入區（row=2）
         self.file_frame = ttk.Frame(asr)
         self.file_button = ttk.Button(self.file_frame, text="選擇檔案", command=self.select_file)
         self.file_button.pack(side=tk.LEFT, padx=(0, 8))
@@ -171,40 +133,39 @@ class WhisperApp:
         ttk.Checkbutton(self.youtube_frame, text="同時下載影片",
                         variable=self.download_video_var).pack(side=tk.LEFT)
 
-        # 上下文提示（Whisper 專用）
-        self.prompt_label = ttk.Label(asr, text="上下文/提示:")
-        self.prompt_label.grid(row=4, column=0, padx=5, pady=3, sticky="nw")
+        # 上下文提示
+        ttk.Label(asr, text="上下文/提示:").grid(row=3, column=0, padx=5, pady=3, sticky="nw")
         self.prompt_text = tk.Text(asr, height=3, wrap=tk.WORD)
-        self.prompt_text.grid(row=4, column=1, columnspan=3, padx=5, pady=3, sticky="ew")
+        self.prompt_text.grid(row=3, column=1, columnspan=3, padx=5, pady=3, sticky="ew")
 
         # 輸出格式
-        ttk.Label(asr, text="輸出格式:").grid(row=5, column=0, padx=5, pady=3, sticky="w")
+        ttk.Label(asr, text="輸出格式:").grid(row=4, column=0, padx=5, pady=3, sticky="w")
         self.output_format_var = tk.StringVar(value="SRT")
         self.output_format_var.trace_add("write", self.on_output_format_change)
         ttk.Radiobutton(asr, text="純文字",
                         variable=self.output_format_var, value="純文字"
-                        ).grid(row=5, column=1, sticky="w")
+                        ).grid(row=4, column=1, sticky="w")
         ttk.Radiobutton(asr, text="SRT 字幕檔",
                         variable=self.output_format_var, value="SRT"
-                        ).grid(row=5, column=2, sticky="w")
+                        ).grid(row=4, column=2, sticky="w")
 
         # 輸出資料夾
-        ttk.Label(asr, text="輸出資料夾:").grid(row=6, column=0, padx=5, pady=3, sticky="w")
+        ttk.Label(asr, text="輸出資料夾:").grid(row=5, column=0, padx=5, pady=3, sticky="w")
         self.output_dir_var = tk.StringVar()
         ttk.Entry(asr, textvariable=self.output_dir_var
-                  ).grid(row=6, column=1, columnspan=2, padx=5, sticky="ew")
+                  ).grid(row=5, column=1, columnspan=2, padx=5, sticky="ew")
         ttk.Button(asr, text="瀏覽...", command=self.browse_output_dir
-                   ).grid(row=6, column=3, padx=5)
+                   ).grid(row=5, column=3, padx=5)
 
         # 輸出檔名
-        ttk.Label(asr, text="輸出檔名:").grid(row=7, column=0, padx=5, pady=3, sticky="w")
+        ttk.Label(asr, text="輸出檔名:").grid(row=6, column=0, padx=5, pady=3, sticky="w")
         self.output_filename_var = tk.StringVar()
         ttk.Entry(asr, textvariable=self.output_filename_var
-                  ).grid(row=7, column=1, columnspan=2, padx=5, sticky="ew")
+                  ).grid(row=6, column=1, columnspan=2, padx=5, sticky="ew")
 
         # 操作按鈕
         asr_btn = ttk.Frame(asr)
-        asr_btn.grid(row=8, column=1, columnspan=3, pady=(8, 2), sticky="w")
+        asr_btn.grid(row=7, column=1, columnspan=3, pady=(8, 2), sticky="w")
         self.transcribe_button = ttk.Button(asr_btn, text="開始轉錄",
                                             command=self.start_transcription_thread,
                                             style="Accent.TButton")
@@ -212,9 +173,6 @@ class WhisperApp:
         self.autofix_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(asr_btn, text="自動校正 SRT",
                         variable=self.autofix_var).pack(side=tk.LEFT, padx=(0, 8))
-        self.to_traditional_var = tk.BooleanVar(value=False)
-        self.traditional_cb = ttk.Checkbutton(asr_btn, text="繁體輸出",
-                                              variable=self.to_traditional_var)
         self.stop_button = ttk.Button(asr_btn, text="終止運算",
                                       command=self.stop_transcription, state="disabled")
         self.stop_button.pack(side=tk.LEFT)
@@ -274,28 +232,13 @@ class WhisperApp:
 
     # ── 輸入類型切換 ──────────────────────────────────────────────
 
-    def on_engine_change(self, *args):
-        engine = self.engine_var.get()
-        models = _ENGINE_MODELS.get(engine, [])
-        self.model_menu.config(values=models)
-        self.model_var.set(_ENGINE_DEFAULT_MODEL.get(engine, models[0] if models else ""))
-        self.engine_hint.config(text=_ENGINE_HINTS.get(engine, ""))
-        if engine == "Whisper":
-            self.prompt_label.grid()
-            self.prompt_text.grid()
-            self.traditional_cb.pack_forget()
-        else:
-            self.prompt_label.grid_remove()
-            self.prompt_text.grid_remove()
-            self.traditional_cb.pack(side=tk.LEFT, padx=(0, 8))
-
     def on_input_type_change(self, *args):
         if self.input_type_var.get() == "檔案":
             self.youtube_frame.grid_remove()
-            self.file_frame.grid(row=3, column=0, columnspan=4, padx=5, pady=3, sticky="ew")
+            self.file_frame.grid(row=2, column=0, columnspan=4, padx=5, pady=3, sticky="ew")
         else:
             self.file_frame.grid_remove()
-            self.youtube_frame.grid(row=3, column=0, columnspan=4, padx=5, pady=3, sticky="ew")
+            self.youtube_frame.grid(row=2, column=0, columnspan=4, padx=5, pady=3, sticky="ew")
         self.update_suggested_filename()
 
     def on_output_format_change(self, *args):
@@ -432,20 +375,17 @@ class WhisperApp:
     def run_transcription(self):
         original_stdout = sys.stdout
         start_time = time.time()
-        engine_name = self.engine_var.get()
         model_size = self.model_var.get()
-        asr_engine = self.asr_engines[engine_name]
         extra_args = {
             'stop_flag_check': lambda: self.stop_thread_flag,
             'download_video': self.download_video_var.get(),
             'output_dir': self.output_dir_var.get(),
             'progress_hook': self.yt_dlp_progress_hook,
-            'asr_engine': asr_engine,
         }
         try:
             self.master.after(0, self.update_result,
-                              f"引擎: {engine_name}  |  模型: {model_size}\n正在載入模型...\n")
-            asr_engine.load_model(model_size)
+                              f"模型: {model_size}\n正在載入模型...\n")
+            self.engine.load_model(model_size)
 
             if self.stop_thread_flag:
                 raise InterruptedError("任務在模型載入後被終止")
@@ -456,12 +396,8 @@ class WhisperApp:
             if self.stop_thread_flag:
                 raise InterruptedError("任務在處理輸入源前被終止")
 
-            if engine_name == "Whisper":
-                self.master.after(0, lambda: self.result_text.insert(
-                    tk.END, "\n--- 開始轉錄，即時進度如下 ---\n"))
-            else:
-                self.master.after(0, lambda: self.result_text.insert(
-                    tk.END, "\n--- 辨識中，請稍候... ---\n"))
+            self.master.after(0, lambda: self.result_text.insert(
+                tk.END, "\n--- 開始轉錄，即時進度如下 ---\n"))
 
             sys.stdout = StdoutRedirector(self.result_text)
 
@@ -474,13 +410,6 @@ class WhisperApp:
 
             if self.stop_thread_flag:
                 raise InterruptedError("任務在轉錄過程中被終止")
-
-            if self.transcription_result and self.to_traditional_var.get():
-                if _opencc:
-                    self._apply_traditional(self.transcription_result)
-                else:
-                    self.master.after(0, lambda: self.result_text.insert(
-                        tk.END, "\n[警告] 未安裝 opencc，繁體轉換略過。pip install opencc-python-reimplemented\n"))
 
         except InterruptedError as e:
             sys.stdout = original_stdout
@@ -498,7 +427,7 @@ class WhisperApp:
                 self.master.after(0, lambda: self.result_text.insert(tk.END, msg))
                 self.master.after(0, self._show_preview)
                 try:
-                    run_logger.save(engine_name, model_size,
+                    run_logger.save("Whisper", model_size,
                                     self.input_source or "", elapsed,
                                     self.transcription_result)
                 except Exception:
@@ -540,17 +469,6 @@ class WhisperApp:
             return srt_utils.generate_srt_from_segments(refined)
         return ""
 
-    def _apply_traditional(self, result: dict):
-        result['text'] = _opencc.convert(result.get('text', ''))
-        for seg in result.get('segments', []):
-            seg['text'] = _opencc.convert(seg.get('text', ''))
-
-    def open_run_log(self):
-        if not os.path.isfile(run_logger.LOG_PATH):
-            messagebox.showinfo("尚無紀錄", "尚未有任何轉錄紀錄，執行一次轉錄後紀錄會自動建立。")
-            return
-        os.startfile(run_logger.LOG_PATH)
-
     def save_result(self):
         if not self.transcription_result:
             messagebox.showwarning("內容為空", "沒有可以儲存的內容。請先執行轉錄。")
@@ -589,6 +507,12 @@ class WhisperApp:
             messagebox.showinfo("儲存成功", f"檔案已成功{label}至:\n{full_path}")
         except Exception as e:
             messagebox.showerror("儲存失敗", f"儲存檔案時發生錯誤:\n{e}")
+
+    def open_run_log(self):
+        if not os.path.isfile(run_logger.LOG_PATH):
+            messagebox.showinfo("尚無紀錄", "尚未有任何轉錄紀錄，執行一次轉錄後紀錄會自動建立。")
+            return
+        os.startfile(run_logger.LOG_PATH)
 
 
 if __name__ == "__main__":

@@ -3,14 +3,9 @@
 import whisper
 import torch
 import os
-import re
 import tempfile
 from moviepy import VideoFileClip
 import yt_dlp
-
-def _strip_char_spaces(text: str) -> str:
-    """移除中文字元之間多餘的空格（FunASR/SenseVoice 輸出格式問題）"""
-    return re.sub(r'(?<=[一-鿿])\s+(?=[一-鿿！-｠，。、？！…])', '', text)
 
 _YT_EXTRACTOR_ARGS = {'youtube': {'player_client': ['ios', 'mweb']}}
 
@@ -48,15 +43,8 @@ class WhisperEngine:
         print("[Whisper] 轉錄完成。")
         return result  # {'text': str, 'segments': [...]}
 
-    def process_input(self, input_source: str, input_type: str, prompt: str = "",
-                      asr_engine=None, **kwargs):
-        """
-        預處理輸入（YT 下載、影片音訊擷取），然後呼叫 asr_engine.transcribe()。
-        asr_engine 預設為 self（Whisper）。
-        """
-        if asr_engine is None:
-            asr_engine = self
-
+    def process_input(self, input_source: str, input_type: str, prompt: str = "", **kwargs):
+        """預處理輸入（YT 下載、影片音訊擷取），然後呼叫 transcribe()。"""
         stop_flag_check = kwargs.get('stop_flag_check', lambda: False)
         progress_hook = kwargs.get('progress_hook', lambda d: None)
 
@@ -70,7 +58,7 @@ class WhisperEngine:
             if input_type == 'audio':
                 if stop_flag_check():
                     return None
-                return asr_engine.transcribe(input_source, prompt)
+                return self.transcribe(input_source, prompt)
 
             elif input_type == 'video':
                 print(f"正在從影片 '{os.path.basename(input_source)}' 中提取音訊...")
@@ -83,7 +71,7 @@ class WhisperEngine:
                     print("音訊提取完成。")
                     if stop_flag_check():
                         return None
-                    return asr_engine.transcribe(audio_path, prompt)
+                    return self.transcribe(audio_path, prompt)
                 finally:
                     if audio_path and os.path.exists(audio_path):
                         os.remove(audio_path)
@@ -142,7 +130,7 @@ class WhisperEngine:
                     return None
                 if not audio_path_for_asr or not os.path.exists(audio_path_for_asr):
                     raise RuntimeError("無法獲取用於轉錄的音訊檔案。")
-                return asr_engine.transcribe(audio_path_for_asr, prompt)
+                return self.transcribe(audio_path_for_asr, prompt)
 
             finally:
                 if not download_video and audio_path_for_asr and os.path.exists(audio_path_for_asr):
@@ -189,199 +177,3 @@ class WhisperEngine:
                 return
             ydl.download([url])
         print("下載完成。")
-
-
-class FunASREngine:
-    """FunASR Paraformer（阿里達摩院），中文/台語辨識精度極高"""
-
-    MODELS = ["paraformer-zh", "paraformer-en"]
-
-    def __init__(self):
-        self.model = None
-        self.model_name = None
-
-    def load_model(self, model_name="paraformer-zh"):
-        if self.model is not None and self.model_name == model_name:
-            print(f"FunASR 模型 '{model_name}' 已載入。")
-            return
-        try:
-            from funasr import AutoModel
-        except ImportError:
-            raise ImportError("請先安裝 FunASR：pip install funasr modelscope")
-
-        print(f"正在載入 FunASR 模型 '{model_name}'... (首次使用需自動下載)")
-        self.model = AutoModel(
-            model=model_name,
-            trust_remote_code=True,
-            disable_update=True,
-        )
-        self.model_name = model_name
-        print("FunASR 模型載入成功。")
-
-    def transcribe(self, audio_path: str, prompt: str = "") -> dict:
-        if self.model is None:
-            raise RuntimeError("FunASR 模型尚未載入。")
-        print(f"[FunASR] 開始辨識: {os.path.basename(audio_path)}")
-        result = self.model.generate(
-            input=audio_path,
-            batch_size_s=300,
-            sentence_timestamp=True,
-        )
-        print("[FunASR] 辨識完成。")
-        return self._to_whisper_format(result)
-
-    def _to_whisper_format(self, result) -> dict:
-        raw = result[0]
-        full_text = _strip_char_spaces(raw.get('text', ''))
-        sentences = raw.get('sentence_info', [])
-        char_ts = raw.get('timestamp', [])  # [[start_ms, end_ms], ...] 字元級
-
-        segments = []
-
-        if sentences:
-            for s in sentences:
-                seg_text = _strip_char_spaces(s.get('text', '')).strip()
-                if seg_text:
-                    segments.append({
-                        'start': s.get('start', 0) / 1000.0,
-                        'end':   s.get('end',   0) / 1000.0,
-                        'text':  seg_text,
-                    })
-
-        if not segments and char_ts and full_text:
-            segments = self._segments_from_char_ts(full_text, char_ts)
-
-        if not segments:
-            segments = [{'start': 0.0, 'end': 0.0, 'text': full_text}]
-
-        return {'text': full_text, 'segments': segments}
-
-    def _segments_from_char_ts(self, text, char_ts, chunk=25):
-        """字元級時間戳 → 按標點或固定長度分段"""
-        PUNCT = set('，。、？！…\n,.?!')
-        segments, buf, seg_start = [], [], None
-        for i, char in enumerate(text):
-            if i >= len(char_ts):
-                break
-            ms_s, ms_e = char_ts[i][0], char_ts[i][1]
-            if seg_start is None:
-                seg_start = ms_s
-            buf.append(char)
-            if char in PUNCT or len(buf) >= chunk:
-                t = ''.join(buf).strip()
-                if t:
-                    segments.append({'start': seg_start / 1000.0,
-                                     'end': ms_e / 1000.0, 'text': t})
-                buf, seg_start = [], None
-        if buf and seg_start is not None:
-            last_e = char_ts[min(len(text) - 1, len(char_ts) - 1)][1]
-            t = ''.join(buf).strip()
-            if t:
-                segments.append({'start': seg_start / 1000.0,
-                                 'end': last_e / 1000.0, 'text': t})
-        return segments
-
-
-class SenseVoiceEngine:
-    """SenseVoice Small（阿里），多語言、速度快，支援情緒偵測"""
-
-    MODELS = ["SenseVoiceSmall"]
-
-    def __init__(self):
-        self.model = None
-        self.model_name = None
-
-    def load_model(self, model_name="SenseVoiceSmall"):
-        if self.model is not None and self.model_name == model_name:
-            print(f"SenseVoice 模型 '{model_name}' 已載入。")
-            return
-        try:
-            from funasr import AutoModel
-        except ImportError:
-            raise ImportError("請先安裝 FunASR：pip install funasr modelscope")
-
-        print(f"正在載入 SenseVoice 模型 '{model_name}'... (首次使用需自動下載)")
-        model_id = f"iic/{model_name}"
-        self.model = AutoModel(
-            model=model_id,
-            vad_model="fsmn-vad",
-            vad_kwargs={"max_single_segment_time": 30000},
-            trust_remote_code=True,
-            disable_update=True,
-        )
-        self.model_name = model_name
-        print("SenseVoice 模型載入成功。")
-
-    def transcribe(self, audio_path: str, prompt: str = "") -> dict:
-        if self.model is None:
-            raise RuntimeError("SenseVoice 模型尚未載入。")
-        print(f"[SenseVoice] 開始辨識: {os.path.basename(audio_path)}")
-        result = self.model.generate(
-            input=audio_path,
-            language="auto",
-            use_itn=True,
-            batch_size_s=60,
-            sentence_timestamp=True,
-        )
-        print("[SenseVoice] 辨識完成。")
-        return self._to_whisper_format(result)
-
-    def _to_whisper_format(self, result) -> dict:
-        try:
-            from funasr.utils.postprocess_utils import rich_transcription_postprocess
-            clean = rich_transcription_postprocess
-        except ImportError:
-            import re
-            def clean(t):
-                return re.sub(r'<\|[^|]+\|>', '', t).strip()
-
-        raw = result[0]
-        full_text = _strip_char_spaces(clean(raw.get('text', '')))
-        sentences = raw.get('sentence_info', [])
-        char_ts = raw.get('timestamp', [])
-
-        segments = []
-
-        if sentences:
-            for s in sentences:
-                seg_text = _strip_char_spaces(clean(s.get('text', ''))).strip()
-                if seg_text:
-                    segments.append({
-                        'start': s.get('start', 0) / 1000.0,
-                        'end':   s.get('end',   0) / 1000.0,
-                        'text':  seg_text,
-                    })
-
-        if not segments and char_ts and full_text:
-            segments = self._segments_from_char_ts(full_text, char_ts, clean)
-
-        if not segments:
-            segments = [{'start': 0.0, 'end': 0.0, 'text': full_text}]
-
-        return {'text': full_text, 'segments': segments}
-
-    def _segments_from_char_ts(self, text, char_ts, clean_fn=None, chunk=25):
-        if clean_fn is None:
-            clean_fn = lambda t: t
-        PUNCT = set('，。、？！…\n,.?!')
-        segments, buf, seg_start = [], [], None
-        for i, char in enumerate(text):
-            if i >= len(char_ts):
-                break
-            ms_s, ms_e = char_ts[i][0], char_ts[i][1]
-            if seg_start is None:
-                seg_start = ms_s
-            buf.append(char)
-            if char in PUNCT or len(buf) >= chunk:
-                t = clean_fn(''.join(buf)).strip()
-                if t:
-                    segments.append({'start': seg_start / 1000.0,
-                                     'end': ms_e / 1000.0, 'text': t})
-                buf, seg_start = [], None
-        if buf and seg_start is not None:
-            last_e = char_ts[min(len(text) - 1, len(char_ts) - 1)][1]
-            t = clean_fn(''.join(buf)).strip()
-            if t:
-                segments.append({'start': seg_start / 1000.0,
-                                 'end': last_e / 1000.0, 'text': t})
-        return segments
