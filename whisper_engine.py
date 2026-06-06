@@ -3,9 +3,14 @@
 import whisper
 import torch
 import os
+import re
 import tempfile
 from moviepy import VideoFileClip
 import yt_dlp
+
+def _strip_char_spaces(text: str) -> str:
+    """移除中文字元之間多餘的空格（FunASR/SenseVoice 輸出格式問題）"""
+    return re.sub(r'(?<=[一-鿿])\s+(?=[一-鿿！-｠，。、？！…])', '', text)
 
 _YT_EXTRACTOR_ARGS = {'youtube': {'player_client': ['ios', 'mweb']}}
 
@@ -227,7 +232,7 @@ class FunASREngine:
 
     def _to_whisper_format(self, result) -> dict:
         raw = result[0]
-        full_text = raw.get('text', '')
+        full_text = _strip_char_spaces(raw.get('text', ''))
         sentences = raw.get('sentence_info', [])
         char_ts = raw.get('timestamp', [])  # [[start_ms, end_ms], ...] 字元級
 
@@ -235,7 +240,7 @@ class FunASREngine:
 
         if sentences:
             for s in sentences:
-                seg_text = s.get('text', '').strip()
+                seg_text = _strip_char_spaces(s.get('text', '')).strip()
                 if seg_text:
                     segments.append({
                         'start': s.get('start', 0) / 1000.0,
@@ -331,7 +336,7 @@ class SenseVoiceEngine:
                 return re.sub(r'<\|[^|]+\|>', '', t).strip()
 
         raw = result[0]
-        full_text = clean(raw.get('text', ''))
+        full_text = _strip_char_spaces(clean(raw.get('text', '')))
         sentences = raw.get('sentence_info', [])
         char_ts = raw.get('timestamp', [])
 
@@ -339,7 +344,7 @@ class SenseVoiceEngine:
 
         if sentences:
             for s in sentences:
-                seg_text = clean(s.get('text', '')).strip()
+                seg_text = _strip_char_spaces(clean(s.get('text', ''))).strip()
                 if seg_text:
                     segments.append({
                         'start': s.get('start', 0) / 1000.0,
