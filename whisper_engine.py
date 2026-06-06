@@ -299,6 +299,8 @@ class SenseVoiceEngine:
         model_id = f"iic/{model_name}"
         self.model = AutoModel(
             model=model_id,
+            vad_model="fsmn-vad",
+            vad_kwargs={"max_single_segment_time": 30000},
             trust_remote_code=True,
             disable_update=True,
         )

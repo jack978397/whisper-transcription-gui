@@ -551,7 +551,7 @@ class WhisperApp:
         if self.output_format_var.get() == "SRT" and self.autofix_var.get():
             try:
                 corrected = fix_and_process_srt(content)
-                if corrected != content:
+                if corrected and corrected != content:
                     final_content = corrected
                     correction_applied = True
             except Exception as e:
