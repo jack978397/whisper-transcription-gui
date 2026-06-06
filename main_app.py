@@ -11,6 +11,12 @@ from whisper_engine import WhisperEngine, FunASREngine, SenseVoiceEngine
 import srt_utils
 import run_logger
 
+try:
+    from opencc import OpenCC
+    _opencc = OpenCC('s2twp')
+except ImportError:
+    _opencc = None
+
 _ENGINE_MODELS = {
     "Whisper":    WhisperEngine.MODELS,
     "FunASR":     FunASREngine.MODELS,
@@ -206,6 +212,10 @@ class WhisperApp:
         self.autofix_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(asr_btn, text="自動校正 SRT",
                         variable=self.autofix_var).pack(side=tk.LEFT, padx=(0, 8))
+        self.to_traditional_var = tk.BooleanVar(value=False)
+        self.traditional_cb = ttk.Checkbutton(asr_btn, text="繁體輸出",
+                                              variable=self.to_traditional_var)
+        self.traditional_cb.pack(side=tk.LEFT, padx=(0, 8))
         self.stop_button = ttk.Button(asr_btn, text="終止運算",
                                       command=self.stop_transcription, state="disabled")
         self.stop_button.pack(side=tk.LEFT)
@@ -464,6 +474,13 @@ class WhisperApp:
             if self.stop_thread_flag:
                 raise InterruptedError("任務在轉錄過程中被終止")
 
+            if self.transcription_result and self.to_traditional_var.get():
+                if _opencc:
+                    self._apply_traditional(self.transcription_result)
+                else:
+                    self.master.after(0, lambda: self.result_text.insert(
+                        tk.END, "\n[警告] 未安裝 opencc，繁體轉換略過。pip install opencc-python-reimplemented\n"))
+
         except InterruptedError as e:
             sys.stdout = original_stdout
             self.master.after(0, self.update_result, f"任務已終止：{e}")
@@ -521,6 +538,11 @@ class WhisperApp:
             refined = srt_utils.refine_srt_segments(segs, max_chars=20)
             return srt_utils.generate_srt_from_segments(refined)
         return ""
+
+    def _apply_traditional(self, result: dict):
+        result['text'] = _opencc.convert(result.get('text', ''))
+        for seg in result.get('segments', []):
+            seg['text'] = _opencc.convert(seg.get('text', ''))
 
     def open_run_log(self):
         if not os.path.isfile(run_logger.LOG_PATH):
