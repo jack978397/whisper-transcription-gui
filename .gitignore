@@ -19,3 +19,4 @@ __pycache__/
 
 # 專案產生的資料夾
 測試輸出/.gradio/
+run_log.csv
